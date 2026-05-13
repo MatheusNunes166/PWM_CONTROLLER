@@ -1,0 +1,324 @@
+# 🤖 Controle de Motor DC com NodeMCU V3 + L293D
+
+## 📋 Índice
+
+- [Descrição do Projeto](#descrição-do-projeto)
+- [Componentes Necessários](#componentes-necessários)
+- [Esquema do Circuito](#esquema-do-circuito)
+- [Como o Circuito Funciona](#como-o-circuito-funciona)
+- [O Código](#o-código)
+- [Como o Motor Funciona](#como-o-motor-funciona)
+- [Problemas Identificados e Correções](#problemas-identificados-e-correções)
+- [Código Corrigido e Final](#código-corrigido-e-final)
+- [Tabela de Velocidades](#tabela-de-velocidades)
+- [Pinagem do NodeMCU V3](#pinagem-do-nodemcu-v3)
+- [Pinagem do L293D](#pinagem-do-l293d)
+- [Dicas e Boas Práticas](#dicas-e-boas-práticas)
+
+---
+
+## 📖 Descrição do Projeto
+
+Este projeto controla a **velocidade de um motor DC** usando um **NodeMCU V3** (ESP8266) e um driver de motor **L293D**. A cada vez que um botão é pressionado, a velocidade do motor aumenta em 25%, passando por 4 níveis até zerar e reiniciar o ciclo.
+
+O controle de velocidade é feito via **PWM** (Pulse Width Modulation — Modulação por Largura de Pulso), que varia a tensão média aplicada ao motor.
+
+---
+
+## 🛒 Componentes Necessários
+
+| Componente       | Quantidade | Descrição                                      |
+|------------------|------------|------------------------------------------------|
+| NodeMCU V3       | 1          | Microcontrolador com Wi-Fi (ESP8266)           |
+| L293D            | 1          | CI driver de motor (ponte H dupla)             |
+| Motor DC         | 1          | Motor de corrente contínua                     |
+| Botão (Push Button) | 1       | Chave táctil para incrementar velocidade       |
+| Resistor 10kΩ    | 1          | Pull-down para o botão                         |
+| Bateria / Fonte  | 1          | Recomendado: 6V a 12V para o motor             |
+| Capacitor        | 1          | 100nF para filtrar ruído do motor (opcional)   |
+| Fios e Protoboard | -         | Para montagem do circuito                      |
+
+---
+
+## 🔌 Esquema do Circuito
+
+```
+NodeMCU V3
+  D1 (GPIO5)  ──────────────►  L293D  pino IN1  (sinal PWM de velocidade)
+  D3 (GPIO0)  ──────────────►  Botão  ──── GND
+                                       └── Resistor 10kΩ ── GND (pull-down)
+
+L293D
+  pino VS  (pino 8)  ──────►  Fonte 6-12V  (alimentação do motor)
+  pino VSS (pino 16) ──────►  3.3V ou 5V   (alimentação lógica)
+  pino GND (pinos 4,5,12,13) ► GND
+  pino OUT1 / OUT2   ──────►  Terminais do Motor DC
+
+Motor DC
+  Terminal A  ──────────────►  L293D OUT1
+  Terminal B  ──────────────►  L293D OUT2
+```
+
+> ⚠️ **ATENÇÃO:** A bateria de 1.5V mostrada no esquema original é insuficiente para girar a maioria dos motores DC. Use uma fonte de **6V a 12V** para resultados adequados.
+
+---
+
+## ⚙️ Como o Circuito Funciona
+
+### NodeMCU V3
+O NodeMCU é o cérebro do circuito. Ele lê o estado do botão e envia um sinal PWM ao L293D para controlar a velocidade do motor.
+
+### L293D (Driver Ponte H)
+O L293D é necessário porque o NodeMCU **não fornece corrente suficiente** para acionar um motor diretamente. O L293D funciona como um amplificador de corrente:
+
+- Recebe o sinal lógico (PWM) do NodeMCU
+- Alimenta o motor com a corrente da fonte externa (BAT1)
+- Permite que o motor gire em **ambas as direções** (ponte H)
+
+### Resistor de Pull-Down (10kΩ)
+Garante que o pino do botão leia `LOW (0)` quando o botão **não está pressionado**, evitando leituras flutuantes e instáveis.
+
+### Capacitor (100nF — recomendado)
+Filtros de ruído elétrico gerado pelo motor, protegendo o NodeMCU de interferências.
+
+---
+
+## 💻 O Código
+
+### Código Original (com problemas)
+
+```cpp
+#include <Arduino.h>
+
+const int pinoBotao = 2;    // ⚠️ GPIO2 = D4 (conflito com LED interno)
+const int pinoPWM   = 7;    // ❌ Pino 7 não existe no NodeMCU!
+
+int velocidade = 0;
+bool ultimoEstadoBotao = LOW;
+
+void setup() {
+  pinMode(pinoBotao, INPUT);
+  pinMode(pinoPWM, OUTPUT);
+  analogWrite(pinoPWM, 0);
+}
+
+void loop() {
+  int leitura = digitalRead(pinoBotao);
+
+  if (leitura == HIGH && ultimoEstadoBotao == LOW) {
+    velocidade += 64;
+
+    if (velocidade > 255) {   // ⚠️ Bug: 256 > 255 seria verdadeiro, mas nunca chega a 256 com += 64
+      velocidade = 0;
+    }
+
+    analogWrite(pinoPWM, velocidade);
+  }
+
+  ultimoEstadoBotao = leitura;
+}
+```
+
+---
+
+## 🔁 Como o Motor Funciona
+
+O controle de velocidade usa **PWM (Modulação por Largura de Pulso)**:
+
+- O sinal PWM alterna rapidamente entre HIGH e LOW
+- O motor responde à **média** da tensão, não ao pico
+- Quanto maior o valor PWM (0–255), maior a velocidade
+
+```
+Duty Cycle 25%:   █░░░░░░░░░░░░░░░  ← Motor lento
+Duty Cycle 50%:   ████░░░░░░░░░░░░  ← Velocidade média
+Duty Cycle 75%:   ████████░░░░░░░░  ← Quase plena
+Duty Cycle 100%:  ████████████████  ← Velocidade máxima
+```
+
+A função `analogWrite(pino, valor)` aceita valores de **0 a 255**:
+- `analogWrite(pino, 0)`   → Motor parado
+- `analogWrite(pino, 128)` → 50% da velocidade
+- `analogWrite(pino, 255)` → 100% da velocidade
+
+---
+
+## ❌ Problemas Identificados e Correções
+
+### Problema 1: Pino `7` não existe no NodeMCU V3
+
+O NodeMCU V3 usa **numeração de GPIO**, não numeração física de pinos como no Arduino Uno. O pino físico 7 não corresponde a nenhum GPIO válido.
+
+| Situação | Código |
+|----------|--------|
+| ❌ Errado | `const int pinoPWM = 7;` |
+| ✅ Correto | `const int pinoPWM = D1; // GPIO5` |
+
+### Problema 2: GPIO2 (D4) tem LED interno
+
+O GPIO2 está conectado ao LED azul interno do NodeMCU. Usá-lo para o botão pode causar comportamento inesperado.
+
+| Situação | Código |
+|----------|--------|
+| ⚠️ Arriscado | `const int pinoBotao = 2; // D4` |
+| ✅ Correto | `const int pinoBotao = D3; // GPIO0` |
+
+### Problema 3: Condição de reset imprecisa
+
+Com `velocidade += 64`, os valores são: 0 → 64 → 128 → 192 → **256**.  
+A condição `velocidade > 255` funciona, mas `>= 256` é mais legível e preciso.
+
+| Situação | Código |
+|----------|--------|
+| ⚠️ Funciona, mas impreciso | `if (velocidade > 255)` |
+| ✅ Mais correto | `if (velocidade >= 256)` |
+
+### Problema 4: Sem debounce
+
+Botões físicos causam **bouncing** (múltiplos sinais rápidos ao pressionar). Sem debounce, um clique pode ser interpretado como 2 ou 3 cliques, pulando níveis de velocidade.
+
+**Solução:** Usar `millis()` para ignorar leituras por ~50ms após cada clique detectado.
+
+---
+
+## ✅ Código Corrigido e Final
+
+```cpp
+#include <Arduino.h>
+
+// ✅ Pinos corretos para NodeMCU V3
+const int pinoBotao = D3;   // GPIO0 — botão seguro
+const int pinoPWM   = D1;   // GPIO5 — suporta PWM
+
+int velocidade = 0;
+bool ultimoEstadoBotao = LOW;
+unsigned long ultimoTempo = 0;
+const int debounce = 50;     // ms — tempo para ignorar bouncing
+
+void setup() {
+  pinMode(pinoBotao, INPUT);   // usa resistor externo de 10kΩ pull-down
+  pinMode(pinoPWM, OUTPUT);
+  analogWrite(pinoPWM, 0);     // motor parado ao iniciar
+  Serial.begin(9600);
+  Serial.println("Sistema iniciado. Motor parado.");
+}
+
+void loop() {
+  bool leitura = digitalRead(pinoBotao);
+  unsigned long agora = millis();
+
+  // Detecta borda de subida (pressionou) + debounce
+  if (leitura == HIGH && ultimoEstadoBotao == LOW && (agora - ultimoTempo) > debounce) {
+    
+    velocidade += 64;
+
+    if (velocidade >= 256) {   // ✅ reset correto
+      velocidade = 0;
+      Serial.println("Velocidade resetada: Motor PARADO");
+    } else {
+      Serial.print("Velocidade PWM: ");
+      Serial.print(velocidade);
+      Serial.print(" (");
+      Serial.print((velocidade * 100) / 255);
+      Serial.println("%)");
+    }
+
+    analogWrite(pinoPWM, velocidade);
+    ultimoTempo = agora;  // registra tempo do último clique válido
+  }
+
+  ultimoEstadoBotao = leitura;
+}
+```
+
+---
+
+## 📊 Tabela de Velocidades
+
+| Nº de Cliques | Valor PWM | Duty Cycle | Comportamento |
+|:-------------:|:---------:|:----------:|:-------------:|
+| 0 (início)    | 0         | 0%         | Motor parado  |
+| 1             | 64        | 25%        | Lento         |
+| 2             | 128       | 50%        | Médio         |
+| 3             | 192       | 75%        | Rápido        |
+| 4             | 256 → 0   | Reset      | Motor para    |
+| 5             | 64        | 25%        | Ciclo reinicia|
+
+---
+
+## 🗺️ Pinagem do NodeMCU V3
+
+| Pino NodeMCU | GPIO    | Função no Projeto      | Observação                   |
+|:------------:|:-------:|:---------------------:|:----------------------------:|
+| D1           | GPIO5   | Saída PWM → L293D IN1 | ✅ Recomendado para PWM       |
+| D3           | GPIO0   | Entrada do Botão      | ✅ Seguro para uso geral      |
+| GND          | —       | Terra comum           | Conectar ao GND do L293D     |
+| 3V3 ou VIN   | —       | Alimentação lógica    | VSS do L293D                 |
+
+> ℹ️ Evite usar D4 (GPIO2), D8 (GPIO15) e D0 (GPIO16) para entradas com botão — eles têm comportamentos especiais durante o boot.
+
+---
+
+## 🗺️ Pinagem do L293D
+
+```
+         L293D — Vista Superior
+    ┌──────────────────┐
+IN1 ─┤ 1            16 ├─ VSS (lógica: 3.3V/5V)
+IN2 ─┤ 2            15 ├─ IN4
+GND ─┤ 3            14 ├─ IN3
+OUT1─┤ 4            13 ├─ OUT4
+OUT2─┤ 5            12 ├─ OUT3
+GND ─┤ 6            11 ├─ GND
+EN1 ─┤ 7            10 ├─ EN2
+VS  ─┤ 8             9 ├─ GND (potência do motor)
+    └──────────────────┘
+```
+
+| Pino L293D | Conectar em      | Descrição                        |
+|:----------:|:----------------:|:--------------------------------:|
+| 1 (IN1)    | D1 do NodeMCU    | Sinal PWM de velocidade          |
+| 2 (IN2)    | GND ou 3.3V      | Direção do motor (fixo)          |
+| 7 (EN1)    | 3.3V (sempre ON) | Habilita o canal 1               |
+| 8 (VS)     | Fonte 6V–12V     | Alimentação de potência do motor |
+| 16 (VSS)   | 3.3V             | Alimentação lógica               |
+| 4 (OUT1)   | Terminal A motor | Saída para o motor               |
+| 5 (OUT2)   | Terminal B motor | Saída para o motor               |
+| 3,6,11,14  | GND              | Terras (também dissipam calor)   |
+
+---
+
+## 💡 Dicas e Boas Práticas
+
+### Debounce
+Sempre implemente debounce em botões físicos. O método por `millis()` não bloqueia o loop, ao contrário de `delay()`.
+
+### Fonte de Alimentação
+- Use fontes separadas para a lógica (NodeMCU) e para o motor (L293D VS)
+- Conecte todos os GNDs em comum
+- Fonte recomendada para motor: **6V a 9V**
+
+### Capacitor no Motor
+Solde um capacitor cerâmico de **100nF** diretamente nos terminais do motor para reduzir ruído elétrico que pode resetar o NodeMCU.
+
+### Serial Monitor
+Use `Serial.begin(9600)` e `Serial.println()` para depurar o código durante o desenvolvimento. Ajuda a confirmar se o botão está sendo lido corretamente.
+
+### Proteção do L293D
+O L293D suporta até **600mA por canal** e temperatura até 70°C. Para motores maiores, use o **L298N** (2A por canal).
+
+---
+
+## 📝 Resumo das Correções Realizadas
+
+| # | Problema Original | Solução Aplicada |
+|---|-------------------|------------------|
+| 1 | `pinoPWM = 7` (inexistente) | Alterado para `D1` (GPIO5) |
+| 2 | `pinoBotao = 2` (conflito com LED) | Alterado para `D3` (GPIO0) |
+| 3 | `velocidade > 255` (impreciso) | Corrigido para `>= 256` |
+| 4 | Sem debounce | Adicionado debounce de 50ms com `millis()` |
+| 5 | Sem feedback serial | Adicionado `Serial.println()` para depuração |
+
+---
+
+*Projeto desenvolvido para a disciplina de Sistemas Embarcados — NodeMCU V3 + L293D Motor Control*
